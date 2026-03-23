@@ -1,0 +1,96 @@
+/* Landing Page Background */
+.landing-page {
+  background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+}
+
+/* Logo Icon Base Styles */
+.logo-icon {
+  height: 4rem;
+  width: 4rem;
+  padding: 0.5rem;
+  will-change: filter, transform;
+  transition: filter 300ms, transform 300ms;
+}
+
+/* Logo Hover Effects with Glow */
+.logo-vite:hover {
+  filter: drop-shadow(0 0 2em rgba(189, 52, 254, 0.667));
+}
+
+.logo-react:hover {
+  filter: drop-shadow(0 0 2em rgba(97, 218, 251, 0.667));
+}
+
+.logo-domo:hover {
+  filter: drop-shadow(0 0 2em rgba(0, 181, 226, 0.667));
+}
+
+.logo-tailwind:hover {
+  filter: drop-shadow(0 0 2em rgba(6, 182, 212, 0.667));
+}
+
+.logo-shadcn {
+  color: #27272a;
+}
+
+.logo-shadcn:hover {
+  filter: drop-shadow(0 0 2em rgba(161, 161, 170, 0.667));
+}
+
+/* React Logo Spin Animation */
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .logo-react {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+/* Gradient Text Animation */
+.gradient-text {
+  background: linear-gradient(
+    135deg,
+    #bd34fe 0%,
+    #41d1ff 25%,
+    #0072bc 50%,
+    #06b6d4 75%,
+    #a1a1aa 100%
+  );
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradient-shift 5s ease infinite;
+}
+
+@keyframes gradient-shift {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+/* Responsive Logo Sizes */
+@media (max-width: 768px) {
+  .logo-icon {
+    height: 3rem;
+    width: 3rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .logo-icon {
+    height: 2.5rem;
+    width: 2.5rem;
+  }
+}
