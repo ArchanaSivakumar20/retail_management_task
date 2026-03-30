@@ -42,7 +42,7 @@ const CreateDocument = (collectionName, document) => {
   console.log(collectionName);
 
   return domo
-    .post(`${BASE_URL}/collections/${collectionName}/documents/`, {
+    .post(`${BASE_URL}/collections/${collectionName}/documents`, {
       content: document,
     })
     .then((response) => response)
@@ -54,7 +54,7 @@ const CreateDocument = (collectionName, document) => {
 
 const ListDocuments = (collectionName) => {
   return domo
-    .get(`${BASE_URL}/collections/${collectionName}/documents/`)
+    .get(`${BASE_URL}/collections/${collectionName}/documents`)
     .then((response) => response)
     .catch((error) => {
       console.error("Error listing documents:", error);
@@ -248,6 +248,49 @@ const GetFile = (fileId, revisionId) => {
     });
 };
 
+const fetchStores = async () => {
+  // Try to fetch from 'stores' collection
+  try {
+    const docs = await ListDocuments("stores");
+    if (docs && docs.length > 0) {
+      return docs.map((d) => d.content.name);
+    }
+  } catch (e) {
+    console.warn("Could not fetch stores from AppDB.", e);
+  }
+  // No fallback - return empty if no stores in Domo
+  return [];
+};
+
+const fetchRequests = async () => {
+  try {
+    const docs = await ListDocuments("requests");
+    return docs.map((d) => ({
+      id: d.id,
+      ...d.content,
+    }));
+  } catch (e) {
+    console.error("Error fetching requests from AppDB:", e);
+    return [];
+  }
+};
+
+const fetchInventory = async (storeName) => {
+  try {
+    const docs = await ListDocuments("inventory");
+    if (docs && docs.length > 0) {
+      const filtered = docs.filter((d) => d.content.store === storeName);
+      return filtered.map((d) => ({
+        id: d.id,
+        ...d.content,
+      }));
+    }
+  } catch (e) {
+    console.warn(`Could not fetch inventory for ${storeName} from AppDB.`, e);
+  }
+  return []; // Return empty array if no data
+};
+
 const ListAllUsers = async (
   includeDetails = false,
   limit = 100,
@@ -301,7 +344,32 @@ const DomoApi = {
   queryDocumentsByDate,
   UploadFile,
   UploadRevision,
-  // DownloadFile,
+  GetFile,
+  queryDocumentsWithAggregations,
+  ListAllUsers,
+  partialupdateDocument,
+  fetchStores,
+  fetchRequests,
+  fetchInventory,
+};
+
+export {
+  fetchStores,
+  fetchRequests,
+  fetchInventory,
+  GetCurrentUser,
+  GetAllUser,
+  GetUser,
+  CreateDocument,
+  ListDocuments,
+  DeleteDocument,
+  BulkDeleteDocuments,
+  GetDocument,
+  UpdateDocument,
+  QueryDocument,
+  queryDocumentsByDate,
+  UploadFile,
+  UploadRevision,
   GetFile,
   queryDocumentsWithAggregations,
   ListAllUsers,
@@ -309,3 +377,4 @@ const DomoApi = {
 };
 
 export default DomoApi;
+ 

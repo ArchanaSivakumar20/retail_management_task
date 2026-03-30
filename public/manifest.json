@@ -5,8 +5,30 @@
     "width": 3,
     "height": 3
   },
-  "mapping": [],
-  "collections": [],
   "workflowMapping": [],
-  "packagesMapping": []
+  "packagesMapping": [],
+  "id": "9294eb62-0df6-4632-b8a4-c98303aacbbd",
+  "proxyId": "a47c11e1-7e67-4537-a580-9c9bb89ec90b",
+  "fileName": "manifest.json",
+  "datasetsMapping": [],
+  "collectionsMapping": [
+    {
+      "id": "0f56b7e9-d267-46a6-a006-9c3fb311acba",
+      "name": "inventory",
+      "syncEnabled": false,
+      "schemaJson": "{\"fields\":[{\"name\":\"id\",\"type\":\"string\",\"required\":true,\"primaryKey\":true},{\"name\":\"sku\",\"type\":\"string\",\"required\":true},{\"name\":\"name\",\"type\":\"string\",\"required\":true},{\"name\":\"category\",\"type\":\"string\",\"required\":true},{\"name\":\"stock\",\"type\":\"number\",\"required\":true},{\"name\":\"threshold\",\"type\":\"number\",\"required\":true},{\"name\":\"store\",\"type\":\"string\",\"required\":true}]}"
+    },
+    {
+      "id": "c99d901b-2ce0-46cc-baef-3a524d0c3307",
+      "name": "requests",
+      "syncEnabled": false,
+      "schemaJson": "{\"fields\":[{\"name\":\"id\",\"type\":\"string\",\"required\":true,\"primaryKey\":true},{\"name\":\"store\",\"type\":\"string\",\"required\":true},{\"name\":\"type\",\"type\":\"string\",\"required\":true},{\"name\":\"sku\",\"type\":\"string\",\"required\":true},{\"name\":\"productName\",\"type\":\"string\",\"required\":true},{\"name\":\"quantity\",\"type\":\"number\",\"required\":true},{\"name\":\"reason\",\"type\":\"string\",\"required\":true},{\"name\":\"status\",\"type\":\"string\",\"required\":true},{\"name\":\"date\",\"type\":\"string\",\"required\":true},{\"name\":\"acknowledgement\",\"type\":\"string\",\"required\":false}]}"
+    },
+    {
+      "id": "0dc95eee-159e-4b68-8cd5-9af46effb5e5",
+      "name": "stores",
+      "syncEnabled": false,
+      "schemaJson": "{\"fields\":[{\"name\":\"name\",\"type\":\"string\",\"required\":true,\"primaryKey\":true}]}"
+    }
+  ]
 }
