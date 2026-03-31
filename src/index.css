@@ -66,3 +66,32 @@
     @apply bg-background text-foreground font-sans antialiased;
   }
 }
+
+/* Hide scrollbar globally on html/body — scroll still works */
+html, body {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+}
+
+/* Utility class for individual scrollable elements */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Remove border-radius from AG Grid to match flat design preference */
+.ag-theme-quartz {
+  --ag-wrapper-border-radius: 0 !important;
+}
+.ag-theme-quartz .ag-header,
+.ag-theme-quartz .ag-root-wrapper,
+.ag-theme-quartz .ag-header-cell {
+  border-radius: 0 !important;
+}

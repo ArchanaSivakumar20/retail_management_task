@@ -1,14 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { AgGridReact } from "ag-grid-react";
 import DomoApi from "../API/domoAPI";
 import {
   Package, FileText, CheckCircle, ArrowLeft, Menu, Plus,
-  Trash2, Edit, Save, X, Search, FileDown, CopyPlus, ChevronDown, Sparkles
+  Trash2, Edit, Save, X, Search, FileDown, CopyPlus, ChevronDown,
 } from "lucide-react";
 import { StatusBadge } from "../components/dashboard/StatusBadge";
 import { StockBar } from "../components/dashboard/StockBar";
-import { RequestCard } from "../components/dashboard/RequestCard";
 import { MetricCard } from "../components/dashboard/MetricCard";
-import { AcknowledgementCard } from "../components/dashboard/AcknowledgementCard";
 
 export default function StoreDashboard({ storeName, onBack, onSwitchStore, stores = [] }) {
   const [activeTab, setActiveTab] = useState("inventory");
@@ -17,21 +16,37 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
   const [allProducts, setAllProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [isMobileNavOpen, setMobileNavOpen] = useState(false);
+  
+  const [seenReqCount, setSeenReqCount] = useState(0);
+  const [seenAckCount, setSeenAckCount] = useState(0);
 
-  //Request Modal
+  useEffect(() => {
+    setSeenReqCount(Number(localStorage.getItem(`seenReq_${storeName}`) || 0));
+    setSeenAckCount(Number(localStorage.getItem(`seenAck_${storeName}`) || 0));
+  }, [storeName]);
+
+  // Track screen width for responsive column defs
+  const [winW, setWinW] = useState(typeof window !== "undefined" ? window.innerWidth : 1280);
+  useEffect(() => {
+    const onResize = () => setWinW(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Request Modal
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState("pullback");
   const [modalForm, setModalForm] = useState({ sku: "", quantity: 1, reason: "" });
   const [modalErrors, setModalErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
 
-//Inventory modal
+  // Inventory modal
   const [showInvModal, setShowInvModal] = useState(false);
   const [invModalMode, setInvModalMode] = useState("add");
   const [editingItem, setEditingItem] = useState(null);
   const [invForm, setInvForm] = useState({ sku: "", name: "", category: "Tops", stock: "", threshold: "" });
   const [invErrors, setInvErrors] = useState({});
 
-  //popup message
   const [toast, setToast] = useState(null);
 
   const showToast = (msg, type = "success") => {
@@ -41,14 +56,21 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
 
   const refresh = async () => {
     setLoading(true);
+    // Do NOT reset visitedTabs — once a badge is dismissed it stays dismissed
     try {
-      const prods = await DomoApi.ListDocuments("inventory");
-      const uniqueProds = prods.map((d) => d.content).filter((p, i, arr) => arr.findIndex((q) => q.sku === p.sku) === i);
+      const [allInvDocs, allReqs] = await Promise.all([
+        DomoApi.ListDocuments("inventory").catch(() => []),
+        DomoApi.fetchRequests()
+      ]);
+      const allInv = allInvDocs.map(d => ({ id: d.id, ...d.content }));
+      const uniqueProds = allInv.filter((p, i, arr) => arr.findIndex(q => q.sku === p.sku) === i);
       setAllProducts(uniqueProds);
-      const inv = await DomoApi.fetchInventory(storeName);
-      setInventory(inv);
-      const reqs = await DomoApi.fetchRequests();
-      setRequests(reqs.filter((r) => r.store === storeName));
+      const storeInv = allInv.filter((d) => d.store === storeName);
+      setInventory(storeInv);
+      // Sort: newest first
+      const storeReqs = allReqs.filter(r => r.store === storeName)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setRequests(storeReqs);
     } catch (e) {
       console.error(e);
       showToast("Failed to fetch data.", "error");
@@ -59,15 +81,21 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
 
   useEffect(() => { refresh(); }, [storeName]);
 
-  const openModal = (mode) => {
+  // Handle tab switching
+  const handleTabChange = (tabId) => {
+    setActiveTab(tabId);
+    setMobileNavOpen(false);
+  };
+
+  const openModal = (mode, prefillSku = "") => {
     setModalMode(mode);
-    setModalForm({ sku: "", quantity: 1, reason: "" });
+    setModalForm({ sku: prefillSku, quantity: 1, reason: "" });
     setModalErrors({});
+    setSubmitting(false);
     setShowModal(true);
     setMobileNavOpen(false);
   };
 
-  // Validation 
   const validateRequest = () => {
     const errs = {};
     if (!modalForm.sku) errs.sku = "Please select a product.";
@@ -87,9 +115,11 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
     return Object.keys(errs).length === 0;
   };
 
-  // Handlers 
+  // Guard: prevent double submit
   const handleCreateRequest = async () => {
+    if (submitting) return;
     if (!validateRequest()) return;
+    setSubmitting(true);
     const currentItem = inventory.find((i) => i.sku === modalForm.sku);
     let productName = currentItem?.name || "Unknown Product";
     if (!currentItem) {
@@ -103,11 +133,15 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
     };
     try {
       await DomoApi.CreateDocument("requests", reqDoc);
-      showToast(`${modalMode} request created successfully.`);
+      showToast(`${modalMode === "pullback" ? "Pull-Back" : "Replenishment"} request submitted.`);
       setShowModal(false);
       setModalErrors({});
       refresh();
-    } catch { showToast("Failed to create request.", "error"); }
+    } catch {
+      showToast("Failed to create request.", "error");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleSaveInv = async () => {
@@ -139,17 +173,37 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
     } catch { showToast("Failed to delete.", "error"); }
   };
 
-  const lowCount     = inventory.filter((i) => i.stock < i.threshold).length;
-  const pendingCount = requests.filter((r) => r.status === "pending").length;
-  const storeAcks    = requests.filter((r) => r.status !== "pending");
+  const lowCount = inventory.filter((i) => i.stock < i.threshold).length;
+  const pendingRequests = requests.filter((r) => r.status === "pending");
+  const pendingCount = pendingRequests.length;
+  // Sort acks: newest first
+  const storeAcks = requests
+    .filter((r) => r.status !== "pending")
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  useEffect(() => {
+    if (activeTab === "requests" && pendingCount > seenReqCount) {
+      setSeenReqCount(pendingCount);
+      localStorage.setItem(`seenReq_${storeName}`, pendingCount);
+    }
+  }, [pendingCount, activeTab, storeName, seenReqCount]);
+
+  useEffect(() => {
+    if (activeTab === "acks" && storeAcks.length > seenAckCount) {
+      setSeenAckCount(storeAcks.length);
+      localStorage.setItem(`seenAck_${storeName}`, storeAcks.length);
+    }
+  }, [storeAcks.length, activeTab, storeName, seenAckCount]);
+
+  const reqBadgeCount = activeTab === "requests" ? 0 : Math.max(0, pendingCount - seenReqCount);
+  const ackBadgeCount = activeTab === "acks" ? 0 : Math.max(0, storeAcks.length - seenAckCount);
 
   const NAV_ITEMS = [
-    { id: "inventory", label: "Inventory",        icon: Package },
-    { id: "requests",  label: "Pending Requests", icon: FileText,   badge: pendingCount },
-    { id: "acks",      label: "Acknowledgements", icon: CheckCircle, badge: storeAcks.length },
+    { id: "inventory", label: "Inventory", icon: Package },
+    { id: "requests", label: "Pending Requests", icon: FileText, badge: reqBadgeCount },
+    { id: "acks",     label: "Acknowledgements", icon: CheckCircle, badge: ackBadgeCount },
   ];
 
-  // Style helpers 
   const inputCls = (err) =>
     `w-full bg-white border rounded-xl px-3 py-2.5 text-sm text-[#1E1B4B] placeholder-slate-300 focus:outline-none focus:ring-2 transition-all ${
       err
@@ -161,9 +215,180 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
 
   const requestIsComplete =
     !!modalForm.sku && Number(modalForm.quantity) >= 1 && modalForm.reason.trim().length > 0;
-
   const invIsComplete =
     invForm.sku.trim() && invForm.name.trim() && invForm.stock !== "" && invForm.threshold !== "";
+
+  //  AG Grid: Stock-level value getter 
+  const stockLevelGetter = (params) => {
+    const { data } = params;
+    if (!data || !data.threshold || data.threshold === 0) return "Unknown";
+    if (data.stock < data.threshold) return "Low";
+    if (data.stock > data.threshold * 2) return "High";
+    return "OK";
+  };
+
+  const isMobile = winW < 640;
+  const isTablet = winW < 1024;
+
+  // AG Grid: Inventory columns — order: SKU, Product, Category, Stock, Status, Actions
+  const invColDefs = useMemo(() => [
+    { field: "sku", headerName: "SKU", width: 110, cellClass: "font-mono text-xs text-slate-400" },
+    { field: "name", headerName: "Product", flex: 1, cellClass: "font-bold text-[#1E1B4B]", minWidth: 120 },
+    {
+      field: "category", headerName: "Category", width: 130, hide: isMobile,
+      cellRenderer: ({ value }) => (
+        <span className="bg-violet-50 border border-violet-100 text-violet-600 px-2 py-0.5 rounded-full text-xs font-semibold">
+          {value}
+        </span>
+      ),
+    },
+    {
+      field: "stock", headerName: "Stock", width: isTablet ? 160 : 200,
+      filter: false,
+      cellRenderer: ({ data }) => {
+        const isLow = data.stock < data.threshold;
+        const isHigh = data.stock > data.threshold * 2;
+        const pct = (data.stock / data.threshold) * 50;
+        return <StockBar stock={data.stock} threshold={data.threshold} pct={pct} isLow={isLow} isHigh={isHigh} />;
+      },
+    },
+    {
+      headerName: "Status", width: 100, hide: isMobile,
+      valueGetter: stockLevelGetter,
+      filter: "agSetColumnFilter",
+      filterParams: { values: ["Low", "OK", "High", "Unknown"] },
+      cellRenderer: ({ value }) => {
+        const map = {
+          Low: "bg-red-50 text-red-600 border-red-100",
+          High: "bg-emerald-50 text-emerald-700 border-emerald-100",
+          OK: "bg-slate-50 text-slate-600 border-slate-100",
+        };
+        return <span className={`px-2 py-0.5 rounded-full text-xs font-bold border ${map[value] || ""}`}>{value}</span>;
+      },
+    },
+    {
+      headerName: "Actions", width: isMobile ? 100 : 190, sortable: false, filter: false,
+      cellRenderer: ({ data }) => isMobile ? (
+        <div className="flex items-center gap-1 h-full">
+          <button onClick={() => { setInvModalMode("edit"); setEditingItem(data); setInvForm(data); setInvErrors({}); setShowInvModal(true); }}
+            className="flex-shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-pink-500 hover:bg-pink-50 transition-all">
+            <Edit className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => handleDeleteInv(data.id)}
+            className="flex-shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all">
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1 h-full overflow-hidden">
+          <button onClick={() => openModal("pullback", data.sku)}
+            className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-600 text-xs font-semibold transition-all border border-slate-200 hover:border-rose-200 whitespace-nowrap">
+            <FileDown className="w-3 h-3" /> Pull-Back
+          </button>
+          <button onClick={() => openModal("replenishment", data.sku)}
+            className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 text-xs font-semibold transition-all border border-slate-200 hover:border-emerald-200 whitespace-nowrap">
+            <CopyPlus className="w-3 h-3" /> Replenish
+          </button>
+          <button onClick={() => { setInvModalMode("edit"); setEditingItem(data); setInvForm(data); setInvErrors({}); setShowInvModal(true); }}
+            className="flex-shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-pink-500 hover:bg-pink-50 transition-all">
+            <Edit className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => handleDeleteInv(data.id)}
+            className="flex-shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all">
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ),
+    },
+  ], [winW, openModal, stockLevelGetter]);
+
+  // AG Grid: Requests columns
+  const reqColDefs = useMemo(() => [
+    {
+      field: "type", headerName: "Type", width: 110,
+      cellRenderer: ({ value }) => {
+        const isPull = value === "pullback";
+        return (
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold border ${
+            isPull ? "bg-rose-50 text-rose-600 border-rose-100" : "bg-emerald-50 text-emerald-700 border-emerald-100"
+          }`}>
+            {isPull ? "Pull-Back" : "Replenish"}
+          </span>
+        );
+      },
+    },
+    { field: "productName", headerName: "Product", flex: 1, cellClass: "font-semibold text-[#1E1B4B]", minWidth: 100 },
+    { field: "sku", headerName: "SKU", width: 110, cellClass: "font-mono text-xs text-slate-400", hide: isMobile },
+    {
+      field: "quantity", headerName: "Qty", width: 75,
+      filter: "agNumberColumnFilter",
+      filterParams: { filterOptions: ["equals"], maxNumConditions: 1 },
+    },
+    { field: "reason", headerName: "Reason", flex: 1, cellClass: "text-slate-500 text-xs", hide: isTablet },
+    {
+      field: "createdAt", headerName: "Date", width: 120, hide: isMobile,
+      sort: "desc",
+      valueFormatter: ({ value }) => value ? new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—",
+    },
+  ], [winW]);
+
+  // AG Grid: Acks columns
+  const ackColDefs = useMemo(() => [
+    {
+      field: "status", headerName: "Status", width: 110,
+      cellRenderer: ({ value }) => {
+        const map = {
+          approved: "bg-emerald-50 text-emerald-700 border-emerald-100",
+          rejected: "bg-red-50 text-red-600 border-red-100",
+        };
+        return (
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold border capitalize ${map[value] || "bg-slate-50 text-slate-500 border-slate-100"}`}>
+            {value}
+          </span>
+        );
+      },
+    },
+    {
+      field: "type", headerName: "Type", width: 105, hide: isMobile,
+      cellRenderer: ({ value }) => {
+        const isPull = value === "pullback";
+        return (
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold border ${
+            isPull ? "bg-rose-50 text-rose-600 border-rose-100" : "bg-emerald-50 text-emerald-700 border-emerald-100"
+          }`}>
+            {isPull ? "Pull-Back" : "Replenish"}
+          </span>
+        );
+      },
+    },
+    { field: "productName", headerName: "Product", flex: 1, cellClass: "font-semibold text-[#1E1B4B]", minWidth: 100 },
+    { field: "sku", headerName: "SKU", width: 110, cellClass: "font-mono text-xs text-slate-400", hide: isMobile },
+    {
+      field: "quantity", headerName: "Qty", width: 75,
+      filter: "agNumberColumnFilter",
+      filterParams: { filterOptions: ["equals"], maxNumConditions: 1 },
+    },
+    { field: "feedback", headerName: "Feedback", flex: 1, cellClass: "text-slate-500 text-xs italic", hide: isTablet },
+    {
+      field: "createdAt", headerName: "Date", width: 120, hide: isMobile,
+      sort: "desc",
+      valueFormatter: ({ value }) => value ? new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—",
+    },
+  ], [winW]);
+
+  const defaultColDef = useMemo(() => ({
+    sortable: true,
+    filter: true,
+    resizable: true,
+    suppressMovable: true,
+    cellStyle: { display: "flex", alignItems: "center" },
+    minWidth: 80,
+    filterParams: {
+      filterOptions: ["contains"],
+      maxNumConditions: 1,
+      debounceMs: 200,
+    },
+  }), []);
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#F5F4FF] font-sans text-[#1E1B4B]">
@@ -172,22 +397,20 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
       {toast && (
         <div className={`fixed bottom-5 right-5 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border text-sm font-semibold ${
           toast.type === "error"
-            ? "bg-red-50 text-red-600 border-red-200 shadow-red-100"
-            : "bg-emerald-50 text-emerald-700 border-emerald-200 shadow-emerald-100"
+            ? "bg-red-50 text-red-600 border-red-200"
+            : "bg-emerald-50 text-emerald-700 border-emerald-200"
         }`}>
           <div className={`w-2 h-2 rounded-full flex-shrink-0 ${toast.type === "error" ? "bg-red-400" : "bg-emerald-400"}`} />
           {toast.msg}
         </div>
       )}
 
-      {/* Mobile overlay */}
       {isMobileNavOpen && (
         <div className="fixed inset-0 bg-[#1E1B4B]/40 backdrop-blur-sm z-40 lg:hidden" onClick={() => setMobileNavOpen(false)} />
       )}
 
-      {/* Sidebar  */}
+      {/* Sidebar */}
       <aside className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-[#1E1B4B] flex flex-col transition-transform duration-300 ${isMobileNavOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
-        {/* Logo */}
         <div className="p-5 border-b border-white/10 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="relative">
@@ -226,7 +449,7 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
             return (
               <button
                 key={item.id}
-                onClick={() => { setActiveTab(item.id); setMobileNavOpen(false); }}
+                onClick={() => handleTabChange(item.id)}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200 ${
                   active
                     ? "bg-pink-500 text-white shadow-lg shadow-pink-500/30"
@@ -235,10 +458,9 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
               >
                 <Icon className={`w-4 h-4 flex-shrink-0 ${active ? "text-white" : "text-white/40"}`} />
                 <span className="font-semibold">{item.label}</span>
+                {/* Badge stays visible always, not just when inactive */}
                 {item.badge > 0 && (
-                  <span className={`ml-auto text-[10px] px-2 py-0.5 rounded-full font-black ${
-                    active ? "bg-white/20 text-white" : "bg-pink-500 text-white"
-                  }`}>
+                  <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-black bg-pink-500 text-white ring-2 ring-[#1E1B4B]">
                     {item.badge}
                   </span>
                 )}
@@ -246,25 +468,9 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
             );
           })}
 
-          {/* Quick Actions */}
-          <div className="mt-6 pt-4 border-t border-white/10 space-y-2">
-            <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest px-3 mb-3">Quick Actions</p>
-            <button
-              onClick={() => openModal("pullback")}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm text-rose-300 hover:bg-rose-500/15 hover:text-rose-200 transition-all border border-white/8 font-semibold"
-            >
-              <FileDown className="w-4 h-4" /> Pull-Back
-            </button>
-            <button
-              onClick={() => openModal("replenishment")}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200 transition-all border border-white/8 font-semibold"
-            >
-              <CopyPlus className="w-4 h-4" /> Replenish
-            </button>
-          </div>
+
         </nav>
 
-        {/* Back */}
         <div className="p-4 border-t border-white/10">
           <button onClick={onBack} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm text-white/40 hover:text-white hover:bg-white/10 transition-all font-semibold">
             <ArrowLeft className="w-4 h-4" /> Switch Role
@@ -273,8 +479,7 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden w-full">
-        {/* Mobile header */}
+      <main className="flex-1 flex flex-col h-full overflow-hidden w-full min-w-0">
         <header className="lg:hidden h-14 border-b border-pink-100 bg-white flex items-center justify-between px-4 flex-shrink-0 shadow-sm">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-pink-400 to-rose-500 flex items-center justify-center">
@@ -287,19 +492,14 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
           </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6">
-          {/* Page header */}
-          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-5 lg:p-7 space-y-5">
+          {/* Page header — no metric cards here, they live inside the Inventory tab */}
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
             <div>
-              <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-[#1E1B4B] mb-1">Store Control</h2>
+              <h2 className="text-xl sm:text-2xl font-black tracking-tight text-[#1E1B4B] mb-0.5">Store Control</h2>
               <p className="text-slate-400 font-medium text-sm">
                 Managing <span className="text-pink-500 font-bold">{storeName}</span>
               </p>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <MetricCard title="Total SKUs" value={inventory.length} icon={Package} />
-              <MetricCard title="Low Stock" value={lowCount} valueClass={lowCount > 0 ? "text-amber-500" : "text-[#1E1B4B]"} />
-              <MetricCard title="Awaiting" value={pendingCount} valueClass="text-pink-500" />
             </div>
           </div>
 
@@ -309,97 +509,81 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
               <p className="text-sm font-medium">Loading data...</p>
             </div>
           ) : (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-4">
 
               {/* INVENTORY TAB */}
               {activeTab === "inventory" && (
-                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-                  <div className="border-b border-slate-100 px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-pink-50/50 to-transparent">
-                    <div>
-                      <h3 className="text-base font-black text-[#1E1B4B]">Local Inventory</h3>
-                      <p className="text-xs text-slate-400 mt-0.5">Manage SKUs assigned to this branch</p>
-                    </div>
-                    <button
-                      onClick={() => { setInvModalMode("add"); setInvForm({ sku: "", name: "", category: "Tops", stock: "", threshold: "" }); setInvErrors({}); setShowInvModal(true); }}
-                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-pink-500 hover:bg-pink-600 text-white text-xs font-bold transition-all shadow-sm shadow-pink-200 whitespace-nowrap"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add Product
-                    </button>
+                <div className="space-y-4">
+                  {/* Metric cards — only on Inventory tab */}
+                  <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                    <MetricCard title="SKUs" value={inventory.length} icon={Package} />
+                    <MetricCard title="Low Stock" value={lowCount} valueClass={lowCount > 0 ? "text-amber-500" : "text-[#1E1B4B]"} />
+                    <MetricCard title="Awaiting" value={pendingCount} valueClass="text-pink-500" />
                   </div>
 
-                  {inventory.length === 0 ? (
-                    <div className="py-20 flex flex-col items-center gap-3 text-slate-400">
-                      <div className="w-16 h-16 rounded-2xl bg-pink-50 flex items-center justify-center">
-                        <Search className="w-7 h-7 text-pink-300" />
+                  <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                    <div className="px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-pink-50/50 to-transparent border-b border-slate-100">
+                      <div>
+                        <h3 className="text-base font-black text-[#1E1B4B]">Local Inventory</h3>
+                        <p className="text-xs text-slate-400 mt-2.5">Use the <span className="font-semibold text-slate-500">Status</span> column to filter Low / OK / High stock</p>
                       </div>
-                      <p className="font-bold text-slate-500">No inventory data</p>
-                      <p className="text-sm">Click "Add Product" to create entries.</p>
+                      <button
+                        onClick={() => { setInvModalMode("add"); setInvForm({ sku: "", name: "", category: "Tops", stock: "", threshold: "" }); setInvErrors({}); setShowInvModal(true); }}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-pink-500 hover:bg-pink-600 text-white text-xs font-bold transition-all shadow-sm shadow-pink-200 whitespace-nowrap"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add Product
+                      </button>
                     </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-slate-100 bg-slate-50/50">
-                            <th className="text-left py-3 px-5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">SKU</th>
-                            <th className="text-left py-3 px-5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Product</th>
-                            <th className="text-left py-3 px-5 text-[10px] font-bold text-slate-400 uppercase tracking-widest hidden sm:table-cell">Category</th>
-                            <th className="text-left py-3 px-5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Stock</th>
-                            <th className="text-right py-3 px-5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {inventory.map((item) => {
-                            const isLow  = item.stock < item.threshold;
-                            const isHigh = item.stock > item.threshold * 2;
-                            const pct    = (item.stock / item.threshold) * 50;
-                            return (
-                              <tr key={item.id} className={`border-b border-slate-100 hover:bg-pink-50/40 transition-colors ${isLow ? "bg-red-50/30" : ""}`}>
-                                <td className="py-3 px-5 font-mono text-xs text-slate-400">{item.sku}</td>
-                                <td className="py-3 px-5 font-bold text-[#1E1B4B]">{item.name}</td>
-                                <td className="py-3 px-5 hidden sm:table-cell">
-                                  <span className="bg-violet-50 border border-violet-100 text-violet-600 px-2 py-0.5 rounded-full text-xs font-semibold">
-                                    {item.category}
-                                  </span>
-                                </td>
-                                <td className="py-3 px-5">
-                                  <StockBar stock={item.stock} threshold={item.threshold} pct={pct} isLow={isLow} isHigh={isHigh} />
-                                </td>
-                                <td className="py-3 px-5">
-                                  <div className="flex justify-end gap-1.5">
-                                    <button onClick={() => { setInvModalMode("edit"); setEditingItem(item); setInvForm(item); setInvErrors({}); setShowInvModal(true); }} className="p-1.5 rounded-lg text-slate-400 hover:text-pink-500 hover:bg-pink-50 transition-all">
-                                      <Edit className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button onClick={() => handleDeleteInv(item.id)} className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all">
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+
+                    {inventory.length === 0 ? (
+                      <div className="py-20 flex flex-col items-center gap-3 text-slate-400">
+                        <div className="w-16 h-16 rounded-2xl bg-pink-50 flex items-center justify-center">
+                          <Search className="w-7 h-7 text-pink-300" />
+                        </div>
+                        <p className="font-bold text-slate-500">No inventory data</p>
+                        <p className="text-sm">Click "Add Product" to create entries.</p>
+                      </div>
+                    ) : (
+                    <div className="ag-theme-quartz w-full" style={{ height: "clamp(300px, 55vh, 520px)" }}>
+                        <AgGridReact
+                          rowData={inventory}
+                          columnDefs={invColDefs}
+                          defaultColDef={defaultColDef}
+                          pagination={true}
+                          paginationPageSize={10}
+                          paginationPageSizeSelector={false}
+                          rowHeight={52}
+                          suppressCellFocus={true}
+                          domLayout="normal"
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
               {/* REQUESTS TAB */}
               {activeTab === "requests" && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-200 pb-4">
-                    <h3 className="text-xl font-black text-[#1E1B4B] tracking-tight">Pending Approval</h3>
-                    <span className="text-xs text-slate-500 bg-white border border-slate-200 shadow-sm px-3 py-1 rounded-full font-semibold">{pendingCount} pending</span>
+                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                  <div className="px-5 py-4 flex items-center justify-between bg-gradient-to-r from-pink-50/50 to-transparent border-b border-slate-100">
+                    <h3 className="text-lg font-black text-[#1E1B4B] tracking-tight">Pending Approval</h3>
+                    <span className="text-xs text-slate-500 bg-white border border-slate-200 px-3 py-1 rounded-full font-semibold">{pendingCount} pending</span>
                   </div>
                   {pendingCount === 0 ? (
-                    <div className="py-16 text-center text-slate-400 border border-dashed border-slate-200 rounded-2xl bg-white">
-                      All caught up. No pending requests.
-                    </div>
+                    <div className="py-16 text-center text-slate-400">All caught up. No pending requests.</div>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {requests.filter((r) => r.status === "pending").map((req) => (
-                        <RequestCard key={req.id} req={req} role="store" />
-                      ))}
+                  <div className="ag-theme-quartz w-full" style={{ height: "clamp(260px, 50vh, 460px)" }}>
+                      <AgGridReact
+                        rowData={pendingRequests}
+                        columnDefs={reqColDefs}
+                        defaultColDef={defaultColDef}
+                        pagination={true}
+                        paginationPageSize={10}
+                        paginationPageSizeSelector={false}
+                        rowHeight={52}
+                        suppressCellFocus={true}
+                        domLayout="normal"
+                      />
                     </div>
                   )}
                 </div>
@@ -407,18 +591,29 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
 
               {/* ACKS TAB */}
               {activeTab === "acks" && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-200 pb-4">
-                    <h3 className="text-xl font-black text-[#1E1B4B] tracking-tight">Processed Responses</h3>
-                    <span className="text-xs text-slate-500 bg-white border border-slate-200 shadow-sm px-3 py-1 rounded-full font-semibold">{storeAcks.length} total</span>
+                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                  <div className="px-5 py-4 flex items-center justify-between bg-gradient-to-r from-pink-50/50 to-transparent border-b border-slate-100">
+                    <div>
+                      <h3 className="text-lg font-black text-[#1E1B4B] tracking-tight">Processed Responses</h3>
+                      <p className="text-xs text-slate-400 mt-0.5">Newest responses shown first</p>
+                    </div>
+                    <span className="text-xs text-slate-500 bg-white border border-slate-200 px-3 py-1 rounded-full font-semibold">{storeAcks.length} total</span>
                   </div>
                   {storeAcks.length === 0 ? (
-                    <div className="py-16 text-center text-slate-400 border border-dashed border-slate-200 rounded-2xl bg-white">
-                      No acknowledgements received yet.
-                    </div>
+                    <div className="py-16 text-center text-slate-400">No acknowledgements received yet.</div>
                   ) : (
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                      {storeAcks.map((req) => <AcknowledgementCard key={req.id} ack={req} />)}
+                  <div className="ag-theme-quartz w-full" style={{ height: "clamp(300px, 55vh, 520px)" }}>
+                      <AgGridReact
+                        rowData={storeAcks}
+                        columnDefs={ackColDefs}
+                        defaultColDef={defaultColDef}
+                        pagination={true}
+                        paginationPageSize={10}
+                        paginationPageSizeSelector={false}
+                        rowHeight={52}
+                        suppressCellFocus={true}
+                        domLayout="normal"
+                      />
                     </div>
                   )}
                 </div>
@@ -428,25 +623,25 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
         </div>
       </main>
 
-      {/* STOCK REQUEST MODAL  */}
+      {/* STOCK REQUEST MODAL – clean, no colored border */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="absolute inset-0 bg-[#1E1B4B]/30 backdrop-blur-md" onClick={() => setShowModal(false)} />
-          <div className="relative w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl shadow-2xl shadow-slate-200/80 overflow-hidden animate-in fade-in slide-in-from-bottom-4 sm:zoom-in-95 duration-200">
-            {/* coloured top */}
-            <div className={`h-1.5 w-full ${modalMode === "pullback" ? "bg-gradient-to-r from-rose-400 to-pink-300" : "bg-gradient-to-r from-emerald-400 to-teal-300"}`} />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-[#1E1B4B]/30 backdrop-blur-md" onClick={() => { if (!submitting) setShowModal(false); }} />
+          <div className="relative w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
 
             <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-xl ${modalMode === "pullback" ? "bg-rose-50 border border-rose-100" : "bg-emerald-50 border border-emerald-100"}`}>
-                  {modalMode === "pullback" ? <FileDown className="w-4 h-4 text-rose-500" /> : <CopyPlus className="w-4 h-4 text-emerald-500" />}
+                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200">
+                  {modalMode === "pullback" ? <FileDown className="w-4 h-4 text-slate-600" /> : <CopyPlus className="w-4 h-4 text-slate-600" />}
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-[#1E1B4B]">Raise {modalMode === "pullback" ? "Pull-Back" : "Replenishment"}</h3>
+                  <h3 className="text-base font-black text-[#1E1B4B]">
+                    Raise {modalMode === "pullback" ? "Pull-Back" : "Replenishment"}
+                  </h3>
                   <p className="text-xs text-slate-400">Submit a stock request to merchandising</p>
                 </div>
               </div>
-              <button onClick={() => setShowModal(false)} className="p-1.5 rounded-lg text-slate-400 hover:text-[#1E1B4B] hover:bg-slate-100 transition-all">
+              <button onClick={() => setShowModal(false)} disabled={submitting} className="p-1.5 rounded-lg text-slate-400 hover:text-[#1E1B4B] hover:bg-slate-100 transition-all">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -493,31 +688,31 @@ export default function StoreDashboard({ storeName, onBack, onSwitchStore, store
             </div>
 
             <div className="px-6 py-4 border-t border-slate-100 flex gap-3 bg-slate-50/50">
-              <button onClick={() => setShowModal(false)} className="flex-1 h-11 rounded-xl border border-slate-200 text-slate-500 hover:text-[#1E1B4B] hover:bg-white font-semibold text-sm transition-all">
+              <button onClick={() => setShowModal(false)} disabled={submitting} className="flex-1 h-11 rounded-xl border border-slate-200 text-slate-500 hover:text-[#1E1B4B] hover:bg-white font-semibold text-sm transition-all disabled:opacity-50">
                 Cancel
               </button>
               <button
                 onClick={handleCreateRequest}
-                disabled={!requestIsComplete}
-                className={`flex-1 h-11 rounded-xl font-black text-sm transition-all shadow-md disabled:opacity-40 disabled:cursor-not-allowed ${
-                  modalMode === "pullback"
-                    ? "bg-rose-500 hover:bg-rose-600 text-white shadow-rose-200 disabled:hover:bg-rose-500"
-                    : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-200 disabled:hover:bg-emerald-500"
-                }`}
+                disabled={!requestIsComplete || submitting}
+                className="flex-1 h-11 rounded-xl bg-[#1E1B4B] hover:bg-[#2d2a6e] text-white font-black text-sm transition-all shadow-md disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Submit Request
+                {submitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Submitting...
+                  </>
+                ) : "Submit Request"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/*INVENTORY MODAL */}
+      {/* INVENTORY MODAL */}
       {showInvModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-[#1E1B4B]/30 backdrop-blur-md" onClick={() => setShowInvModal(false)} />
-          <div className="relative w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-y-auto max-h-[90vh] animate-in fade-in slide-in-from-bottom-4 sm:zoom-in-95 duration-200">
-            <div className="h-1.5 w-full bg-gradient-to-r from-pink-400 to-violet-400" />
+          <div className="relative w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-y-auto max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
             <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10">
               <div>
                 <h3 className="text-base font-black text-[#1E1B4B]">{invModalMode === "add" ? "Add to Local Inventory" : "Edit Inventory Item"}</h3>
