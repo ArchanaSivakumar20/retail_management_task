@@ -134,7 +134,7 @@ export default function App() {
         />
 
         {/* Logo + Title */}
-        <div className="z-10 flex flex-col items-center mb-6 sm:mb-10">
+        <div className="z-10 flex flex-col items-center mb-6 sm:mb-10 w-full px-4 text-center">
           <div className="relative mb-4 sm:mb-5">
             <div className="w-14 h-14 sm:w-[72px] sm:h-[72px] rounded-2xl bg-gradient-to-br from-[#1E1B4B] to-[#3730A3] flex items-center justify-center shadow-2xl shadow-indigo-900/25">
               <span className="text-2xl sm:text-3xl font-black text-white tracking-tighter">Z</span>
@@ -163,7 +163,7 @@ export default function App() {
         </div>
 
         {/* Role Cards */}
-        <div className="z-10 flex flex-col sm:flex-row gap-4 w-full max-w-lg sm:max-w-2xl">
+        <div className="z-10 flex flex-col gap-4 w-full sm:flex-row max-w-sm sm:max-w-2xl px-4 sm:px-0">
           {/* Store Manager */}
           <button
             onClick={() => handleRoleClick("store")}
